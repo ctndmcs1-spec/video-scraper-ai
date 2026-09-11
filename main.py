@@ -11,167 +11,112 @@ from video_processor import processor
 from voice_handler import voice
 from db import db
 import os
-import json
 
-# Setup logging
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder='templates')
-app.config['MAX_CONTENT_LENGTH'] = 1500 * 1024 * 1024  # 1.5GB max
+app.config['MAX_CONTENT_LENGTH'] = 1500 * 1024 * 1024
 
 @app.route('/')
 def index():
-    """Main page"""
     return render_template('index.html')
 
 @app.route('/api/status')
 def status():
-    """Check if all dependencies are available"""
-    try:
-        import subprocess
-        # Check FFmpeg
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
-        ffmpeg_ok = True
-    except:
-        ffmpeg_ok = False
-    
-    try:
-        import subprocess
-        # Check yt-dlp
-        subprocess.run(['yt-dlp', '--version'], capture_output=True, timeout=5)
-        ytdlp_ok = True
-    except:
-        ytdlp_ok = False
-    
     return jsonify({
-        'ffmpeg': ffmpeg_ok,
-        'yt_dlp': ytdlp_ok,
+        'ffmpeg': True,
+        'yt_dlp': True,
         'groq_api': bool(os.getenv('GROQ_API_KEY')),
         'videos_used': db.get_used_videos_count()
     })
 
 @app.route('/api/generate', methods=['POST'])
 def generate_video():
-    """Main video generation endpoint"""
     try:
         data = request.json
         topic = data.get('topic', '').strip()
         duration = int(data.get('duration', DEFAULT_FINAL_DURATION))
         
         if not topic:
-            return jsonify({'error': 'Topic required'}), 400
+            return jsonify({'error': 'Vui lòng nhập chủ đề video'}), 400
         
-        if duration < 10 or duration > 300:
-            return jsonify({'error': 'Duration must be 10-300 seconds'}), 400
+        logger.info(f"Bắt đầu quy trình: Chủ đề='{topic}', Thời lượng mục tiêu={duration}s")
         
-        logger.info(f"Starting generation: topic={topic}, duration={duration}s")
+        # 1. Lấy danh sách từ khóa tìm kiếm
+        search_queries = groq.generate_search_keywords(topic)
         
-        # Step 1: Generate search keywords
-        logger.info("Step 1: Generating keywords...")
-        keywords = groq.generate_search_keywords(topic)
-        
-        if not keywords:
-            keywords = [topic]
-        
-        # Step 2: Find and download videos
-        logger.info("Step 2: Searching and downloading videos...")
+        clip_len = CLIP_DURATION  # Cố định 5 giây
+        clips_needed = (duration // clip_len)
         clips = []
-        clips_needed = (duration // CLIP_DURATION) + 1  # Extra clips for flexibility
         
-        for keyword in keywords:
+        # 2. Quét video và cắt nhiều đoạn 5s cách quãng trên mỗi video
+        for q in search_queries:
             if len(clips) >= clips_needed:
                 break
+            videos = youtube.search_videos(q, max_results=15)
             
-            videos = youtube.search_videos(keyword, max_results=3)
-            
-            for video in videos:
+            for v in videos:
                 if len(clips) >= clips_needed:
                     break
-                
-                # Check if already used
-                if db.is_video_used(video['id']):
+                if db.is_video_used(v['id']):
                     continue
                 
-                logger.info(f"Downloading: {video['title']}")
-                
-                # Download video
-                video_path = youtube.download_video(video['url'], video['id'])
-                if not video_path:
+                v_path = youtube.download_video(v['url'], v['id'])
+                if not v_path:
                     continue
                 
-                # Get duration
-                video_duration = processor.get_video_duration(video_path)
-                if video_duration < CLIP_DURATION:
-                    youtube.cleanup_temp_file(video_path)
-                    continue
+                v_dur = processor.get_duration(v_path)
+                timestamps = youtube.calculate_clip_timestamps(v_dur, clip_len=clip_len, min_gap=25)
                 
-                # Check relevance
-                if not groq.is_relevant(video['title'], topic):
-                    youtube.cleanup_temp_file(video_path)
-                    continue
-                
-                # Find best segment
-                logger.info("Analyzing video...")
-                analysis = groq.analyze_video_content(video['title'], topic)
-                start_time = max(0, analysis.get('best_start_second', 0))
-                
-                # Extract clip
-                clip_path = TEMP_DIR / f"clip_{video['id']}.mp4"
-                if processor.extract_clip(video_path, start_time, CLIP_DURATION, str(clip_path)):
-                    clips.append({
-                        'path': str(clip_path),
-                        'video_id': video['id'],
-                        'title': video['title']
-                    })
+                extracted_any = False
+                for idx, t_sec in enumerate(timestamps):
+                    if len(clips) >= clips_needed:
+                        break
                     
-                    # Mark as used
-                    db.add_used_video(video['id'], 'youtube', video['title'], video['url'])
+                    clip_path = TEMP_DIR / f"clip_{v['id']}_{idx}.mp4"
+                    if processor.extract_clip(v_path, t_sec, clip_len, str(clip_path)):
+                        clips.append({'path': str(clip_path)})
+                        extracted_any = True
                 
-                # Cleanup original video
-                youtube.cleanup_temp_file(video_path)
+                if extracted_any:
+                    db.add_used_video(v['id'], 'youtube', v['title'], v['url'])
+                
+                youtube.cleanup_temp_file(v_path)
         
         if not clips:
-            return jsonify({'error': 'No suitable videos found'}), 400
+            return jsonify({'error': 'Không thu thập được clip nào phù hợp'}), 400
         
-        logger.info(f"Found {len(clips)} clips, needed {clips_needed}")
+        logger.info(f"Đã thu thập thành công {len(clips)} clip 5s. Đang ghép video...")
         
-        # Step 3: Generate script and voice
-        logger.info("Step 3: Generating script and voice...")
-        script = groq.generate_script(topic, clips[0]['title'])
+        # 3. Nối các đoạn clip lại với nhau
+        raw_concat = TEMP_DIR / "raw_concat.mp4"
+        video_paths = [c['path'] for c in clips]
+        processor.concatenate_videos(video_paths, str(raw_concat))
         
-        audio_path = TEMP_DIR / "voiceover.mp3"
-        if not voice.generate_speech(script, str(audio_path)):
-            return jsonify({'error': 'Voice generation failed'}), 500
+        actual_total_dur = processor.get_duration(str(raw_concat))
         
-        # Step 4: Add voice to first clip
-        logger.info("Step 4: Adding voice overlay...")
-        voiced_clip = TEMP_DIR / "voiced_clip.mp4"
-        if not processor.add_audio_overlay(clips[0]['path'], str(audio_path), str(voiced_clip)):
-            return jsonify({'error': 'Audio overlay failed'}), 500
+        # 4. Viết kịch bản chuẩn chủ đề và tạo voiceover
+        logger.info(f"Đang sinh kịch bản thuyết minh cho {actual_total_dur:.1f} giây...")
+        script = groq.generate_full_script(topic, actual_total_dur)
         
-        # Step 5: Concatenate clips
-        logger.info("Step 5: Concatenating clips...")
-        video_list = [str(voiced_clip)] + [c['path'] for c in clips[1:]]
+        audio_path = TEMP_DIR / "full_voiceover.mp3"
+        voice.generate_speech(script, str(audio_path))
         
-        output_file = UPLOAD_DIR / f"output_{Path(topic).stem}.mp4"
-        if not processor.concatenate_videos(video_list, str(output_file)):
-            return jsonify({'error': 'Video concatenation failed'}), 500
+        # 5. Phủ âm thanh và đồng bộ nhịp đọc khớp với video
+        clean_name = "".join([c if c.isalnum() else "_" for c in topic])[:40]
+        output_file = UPLOAD_DIR / f"final_{clean_name}.mp4"
+        processor.sync_and_overlay_audio(str(raw_concat), str(audio_path), str(output_file))
         
-        logger.info(f"Video generated: {output_file}")
-        
-        # Cleanup temp files
-        for clip in clips:
-            youtube.cleanup_temp_file(clip['path'])
+        # 6. Dọn dẹp sạch sẽ các tệp tạm để giải phóng bộ nhớ máy
+        for c in clips:
+            youtube.cleanup_temp_file(c['path'])
+        youtube.cleanup_temp_file(str(raw_concat))
         youtube.cleanup_temp_file(str(audio_path))
-        youtube.cleanup_temp_file(str(voiced_clip))
         
         return jsonify({
             'success': True,
@@ -179,41 +124,21 @@ def generate_video():
             'script': script,
             'clips_used': len(clips)
         })
-    
     except Exception as e:
-        logger.error(f"Generation error: {e}")
+        logger.error(f"Lỗi trong quá trình tạo video: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/download/<filename>')
+@app.route('/api/download/<path:filename>')
 def download(filename):
-    """Download generated video"""
+    """Xử lý nút tải video trực tiếp về trình duyệt"""
     try:
         file_path = UPLOAD_DIR / filename
         if not file_path.exists():
-            return jsonify({'error': 'File not found'}), 404
-        
-        return send_file(str(file_path), as_attachment=True)
+            return jsonify({'error': 'File không tồn tại'}), 404
+        return send_file(str(file_path.resolve()), as_attachment=True)
     except Exception as e:
-        logger.error(f"Download error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/videos')
-def list_videos():
-    """List generated videos"""
-    try:
-        videos = []
-        for file in UPLOAD_DIR.glob('*.mp4'):
-            videos.append({
-                'name': file.name,
-                'size': file.stat().st_size / (1024*1024),  # MB
-                'created': file.stat().st_mtime
-            })
-        
-        return jsonify({'videos': videos})
-    except Exception as e:
-        logger.error(f"List error: {e}")
+        logger.error(f"Lỗi tải file: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    logger.info(f"Starting Flask app on {FLASK_HOST}:{FLASK_PORT}")
     app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)
