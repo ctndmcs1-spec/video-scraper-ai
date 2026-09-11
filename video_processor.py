@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from config import (
     TEMP_DIR, FFMPEG_PRESET, FFMPEG_CRF, 
-    FFMPEG_BITRATE_VIDEO, FFMPEG_BITRATE_AUDIO, CLIP_DURATION
+    FFMPEG_BITRATE_VIDEO, FFMPEG_BITRATE_AUDIO
 )
 import logging
 
@@ -14,184 +14,109 @@ class VideoProcessor:
         self.temp_dir = TEMP_DIR
     
     def extract_clip(self, video_path, start_time, duration, output_path):
-        """Extract 5-second clip from video"""
         try:
             cmd = [
-                'ffmpeg',
-                '-i', video_path,
+                'ffmpeg', '-y',
                 '-ss', str(start_time),
+                '-i', str(Path(video_path).resolve()),
                 '-t', str(duration),
-                '-c:v', 'libx264',
-                '-preset', FFMPEG_PRESET,
-                '-crf', str(FFMPEG_CRF),
-                '-c:a', 'aac',
-                '-b:a', FFMPEG_BITRATE_AUDIO,
-                '-y',  # Overwrite output file
-                output_path
+                '-c:v', 'libx264', '-preset', FFMPEG_PRESET, '-crf', str(FFMPEG_CRF),
+                '-c:a', 'aac', '-b:a', FFMPEG_BITRATE_AUDIO,
+                '-vf', 'scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2,setsar=1',
+                '-r', '24',
+                str(Path(output_path).resolve())
             ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=60
-            )
-            
-            if result.returncode == 0 and os.path.exists(output_path):
-                logger.info(f"Extracted clip: {output_path}")
-                return True
-            else:
-                logger.error(f"Clip extraction failed: {result.stderr.decode()}")
-                return False
-        
+            res = subprocess.run(cmd, capture_output=True, timeout=120)
+            return res.returncode == 0 and os.path.exists(output_path)
         except Exception as e:
             logger.error(f"Extract clip error: {e}")
             return False
     
     def add_audio_overlay(self, video_path, audio_path, output_path):
-        """Overlay voice narration on video (underlay video)"""
         try:
             cmd = [
-                'ffmpeg',
-                '-i', video_path,
-                '-i', audio_path,
-                '-filter_complex', '[0:a][1:a]amerge=inputs=2[a]',
+                'ffmpeg', '-y',
+                '-i', str(Path(video_path).resolve()),
+                '-i', str(Path(audio_path).resolve()),
+                '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=first[a]',
                 '-map', '0:v',
                 '-map', '[a]',
-                '-c:v', 'libx264',
-                '-preset', FFMPEG_PRESET,
-                '-crf', str(FFMPEG_CRF),
+                '-c:v', 'copy',
                 '-c:a', 'aac',
                 '-b:a', FFMPEG_BITRATE_AUDIO,
-                '-ac', '2',
-                '-y',
-                output_path
+                str(Path(output_path).resolve())
             ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=60
-            )
-            
-            if result.returncode == 0 and os.path.exists(output_path):
-                logger.info(f"Audio overlay added: {output_path}")
-                return True
-            else:
-                logger.error(f"Audio overlay failed: {result.stderr.decode()}")
-                return False
-        
+            res = subprocess.run(cmd, capture_output=True, timeout=120)
+            if res.returncode != 0:
+                # Fallback neu clip goc khong co audio stream
+                cmd_fallback = [
+                    'ffmpeg', '-y',
+                    '-i', str(Path(video_path).resolve()),
+                    '-i', str(Path(audio_path).resolve()),
+                    '-map', '0:v:0',
+                    '-map', '1:a:0',
+                    '-c:v', 'copy',
+                    '-c:a', 'aac',
+                    '-shortest',
+                    str(Path(output_path).resolve())
+                ]
+                res = subprocess.run(cmd_fallback, capture_output=True, timeout=120)
+            return res.returncode == 0 and os.path.exists(output_path)
         except Exception as e:
             logger.error(f"Audio overlay error: {e}")
             return False
     
     def concatenate_videos(self, video_list, output_path):
-        """Merge multiple video clips into one"""
         try:
-            # Create concat demuxer file
             concat_file = self.temp_dir / "concat.txt"
-            with open(concat_file, 'w') as f:
+            with open(concat_file, 'w', encoding='utf-8') as f:
                 for video in video_list:
-                    f.write(f"file '{video}'\n")
+                    # Ghi tuyet doi duong dan de FFmpeg khong bi nhan doi path
+                    abs_v = Path(video).resolve().as_posix()
+                    f.write(f"file '{abs_v}'\n")
             
             cmd = [
-                'ffmpeg',
+                'ffmpeg', '-y',
                 '-f', 'concat',
                 '-safe', '0',
-                '-i', str(concat_file),
-                '-c:v', 'libx264',
-                '-preset', FFMPEG_PRESET,
-                '-crf', str(FFMPEG_CRF),
-                '-c:a', 'aac',
-                '-b:a', FFMPEG_BITRATE_AUDIO,
-                '-y',
-                output_path
+                '-i', str(concat_file.resolve()),
+                '-c', 'copy',
+                str(Path(output_path).resolve())
             ]
+            res = subprocess.run(cmd, capture_output=True, timeout=300)
             
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=300
-            )
-            
-            # Cleanup concat file
+            if res.returncode != 0:
+                # Fallback re-encode neu cac clip khac codec
+                cmd_reencode = [
+                    'ffmpeg', '-y',
+                    '-f', 'concat',
+                    '-safe', '0',
+                    '-i', str(concat_file.resolve()),
+                    '-c:v', 'libx264', '-preset', FFMPEG_PRESET,
+                    '-c:a', 'aac',
+                    str(Path(output_path).resolve())
+                ]
+                res = subprocess.run(cmd_reencode, capture_output=True, timeout=300)
+
             if concat_file.exists():
                 os.remove(concat_file)
             
-            if result.returncode == 0 and os.path.exists(output_path):
-                logger.info(f"Videos concatenated: {output_path}")
-                return True
-            else:
-                logger.error(f"Concatenation failed: {result.stderr.decode()}")
-                return False
-        
+            return res.returncode == 0 and os.path.exists(output_path)
         except Exception as e:
             logger.error(f"Concatenate error: {e}")
             return False
     
     def get_video_duration(self, video_path):
-        """Get video duration in seconds"""
         try:
             cmd = [
-                'ffprobe',
-                '-v', 'error',
+                'ffprobe', '-v', 'error',
                 '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1:noprint_wrappers=1',
-                video_path
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                str(Path(video_path).resolve())
             ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode == 0:
-                duration = float(result.stdout.strip())
-                return duration
-            else:
-                logger.error(f"Duration retrieval failed")
-                return 0
-        
-        except Exception as e:
-            logger.error(f"Duration error: {e}")
-            return 0
-    
-    def get_video_info(self, video_path):
-        """Get video metadata"""
-        try:
-            cmd = [
-                'ffprobe',
-                '-v', 'error',
-                '-select_streams', 'v:0',
-                '-show_entries', 'stream=width,height,r_frame_rate',
-                '-of', 'json',
-                video_path
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode == 0:
-                import json
-                data = json.loads(result.stdout)
-                if data.get('streams'):
-                    stream = data['streams'][0]
-                    return {
-                        'width': stream.get('width'),
-                        'height': stream.get('height'),
-                        'fps': stream.get('r_frame_rate', '30/1'),
-                    }
-            
-            return None
-        
-        except Exception as e:
-            logger.error(f"Video info error: {e}")
-            return None
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            return float(res.stdout.strip()) if res.returncode == 0 else 0.0
+        except Exception:
+            return 0.0
 
-# Global instance
 processor = VideoProcessor()
