@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Scraper AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .status-bar {
+            background: #f5f5f5;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 30px;
+            font-size: 12px;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            color: #666;
+        }
+        
+        .status-badge {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        
+        .badge-ok {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-fail {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        input[type="text"],
+        input[type="range"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        input[type="range"] {
+            padding: 0;
+            height: 6px;
+            cursor: pointer;
+            accent-color: #667eea;
+        }
+        
+        .duration-display {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            margin-top: 10px;
+            font-weight: bold;
+            color: #667eea;
+            font-size: 18px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-generate {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-generate:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-generate:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .btn-clear {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        .btn-clear:hover:not(:disabled) {
+            background: #d0d0d0;
+        }
+        
+        .progress-container {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            color: #666;
+            font-size: 13px;
+            text-align: center;
+        }
+        
+        .message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+        
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .download-section {
+            display: none;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #e0e0e0;
+        }
+        
+        .download-section h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .download-btn {
+            background: #28a745;
+            color: white;
+            width: 100%;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .download-btn:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                padding: 25px;
+            }
+            
+            .header h1 {
+                font-size: 22px;
+            }
+            
+            button {
+                font-size: 14px;
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 Video Scraper AI</h1>
+            <p>AI-powered video generation from YouTube</p>
+        </div>
+        
+        <div class="status-bar" id="statusBar">
+            <div class="status-item">
+                <span>FFmpeg</span>
+                <span class="status-badge" id="statusFFmpeg">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span>yt-dlp</span>
+                <span class="status-badge" id="statusYtdlp">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span>Groq API</span>
+                <span class="status-badge" id="statusGroq">Checking...</span>
+            </div>
+            <div class="status-item">
+                <span>Videos Used</span>
+                <span id="videosUsed">0</span>
+            </div>
+        </div>
+        
+        <form id="generateForm">
+            <div class="form-group">
+                <label for="topic">Video Topic/Keyword 🔍</label>
+                <input 
+                    type="text" 
+                    id="topic" 
+                    placeholder="e.g., motivational quotes, funny cats, tech tips..."
+                    required
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="duration">Video Duration ⏱️</label>
+                <input 
+                    type="range" 
+                    id="duration" 
+                    min="10" 
+                    max="300" 
+                    value="60"
+                    step="5"
+                >
+                <div class="duration-display" id="durationDisplay">60 seconds</div>
+            </div>
+            
+            <div class="button-group">
+                <button type="submit" class="btn-generate" id="generateBtn">
+                    Generate Video 🚀
+                </button>
+                <button type="reset" class="btn-clear">Clear</button>
+            </div>
+        </form>
+        
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">Initializing...</div>
+        </div>
+        
+        <div class="message" id="message"></div>
+        
+        <div class="download-section" id="downloadSection">
+            <h3>✅ Video Ready!</h3>
+            <a href="#" class="download-btn" id="downloadBtn">
+                ⬇️ Download Video
+            </a>
+        </div>
+    </div>
+    
+    <script>
+        const topicInput = document.getElementById('topic');
+        const durationSlider = document.getElementById('duration');
+        const durationDisplay = document.getElementById('durationDisplay');
+        const generateForm = document.getElementById('generateForm');
+        const generateBtn = document.getElementById('generateBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const messageDiv = document.getElementById('message');
+        const downloadSection = document.getElementById('downloadSection');
+        const downloadBtn = document.getElementById('downloadBtn');
+        
+        // Update duration display
+        durationSlider.addEventListener('input', (e) => {
+            const seconds = e.target.value;
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            if (minutes > 0) {
+                durationDisplay.textContent = `${minutes}m ${secs}s`;
+            } else {
+                durationDisplay.textContent = `${seconds} seconds`;
+            }
+        });
+        
+        // Check status
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                updateStatusBadge('statusFFmpeg', data.ffmpeg);
+                updateStatusBadge('statusYtdlp', data.yt_dlp);
+                updateStatusBadge('statusGroq', data.groq_api);
+                document.getElementById('videosUsed').textContent = data.videos_used;
+            } catch (e) {
+                console.error('Status check failed:', e);
+            }
+        }
+        
+        function updateStatusBadge(elementId, status) {
+            const badge = document.getElementById(elementId);
+            if (status) {
+                badge.textContent = '✅ OK';
+                badge.className = 'status-badge badge-ok';
+            } else {
+                badge.textContent = '❌ Failed';
+                badge.className = 'status-badge badge-fail';
+            }
+        }
+        
+        function showMessage(text, type = 'info') {
+            messageDiv.textContent = text;
+            messageDiv.className = `message ${type}`;
+            messageDiv.style.display = 'block';
+        }
+        
+        function updateProgress(percent, text) {
+            progressFill.style.width = percent + '%';
+            progressText.textContent = text;
+        }
+        
+        // Generate video
+        generateForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const topic = topicInput.value.trim();
+            const duration = parseInt(durationSlider.value);
+            
+            if (!topic) {
+                showMessage('Please enter a topic', 'error');
+                return;
+            }
+            
+            generateBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            downloadSection.style.display = 'none';
+            messageDiv.style.display = 'none';
+            
+            try {
+                updateProgress(10, 'Searching for videos...');
+                
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        topic: topic,
+                        duration: duration
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Generation failed');
+                }
+                
+                updateProgress(90, 'Finalizing video...');
+                const result = await response.json();
+                
+                updateProgress(100, 'Done!');
+                
+                showMessage(
+                    `✅ Video generated successfully!\n` +
+                    `📹 Clips used: ${result.clips_used}\n` +
+                    `📝 Script: "${result.script.substring(0, 50)}..."`,
+                    'success'
+                );
+                
+                // Show download button
+                downloadBtn.href = `/api/download/${result.file}`;
+                downloadBtn.download = result.file;
+                downloadSection.style.display = 'block';
+                
+                checkStatus(); // Update video count
+                
+            } catch (e) {
+                showMessage(`❌ Error: ${e.message}`, 'error');
+                updateProgress(0, '');
+            } finally {
+                generateBtn.disabled = false;
+                setTimeout(() => {
+                    progressContainer.style.display = 'none';
+                }, 2000);
+            }
+        });
+        
+        // Initial check
+        checkStatus();
+        setInterval(checkStatus, 30000); // Check every 30 seconds
+    </script>
+</body>
+</html>
