@@ -1,90 +1,34 @@
-import subprocess
+import asyncio
 import os
-from pathlib import Path
-from config import TEMP_DIR, TTS_LANGUAGE, TTS_SPEED
 import logging
+from pathlib import Path
+import edge_tts
+from config import TTS_VOICE
 
 logger = logging.getLogger(__name__)
 
 class VoiceHandler:
     def __init__(self):
-        self.temp_dir = TEMP_DIR
-    
-    def text_to_speech_google(self, text, output_file):
-        """
-        Google TTS using free edge-tts library (no API key needed)
-        Install: pip install edge-tts
-        """
-        try:
-            cmd = [
-                'edge-tts',
-                '--text', text,
-                '--voice', 'en-US-AriaNeural',  # Natural sounding
-                '--rate', f'+{int((TTS_SPEED - 1) * 50)}%',
-                '--output-file', output_file
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                timeout=60
-            )
-            
-            if result.returncode != 0:
-                logger.error(f"TTS error: {result.stderr.decode()}")
-                return False
-            
-            if os.path.exists(output_file):
-                logger.info(f"TTS generated: {output_file}")
-                return True
-            
-            return False
-        
-        except Exception as e:
-            logger.error(f"TTS generation error: {e}")
-            return False
-    
-    def text_to_speech_pyttsx3(self, text, output_file):
-        """
-        Fallback: pyttsx3 (offline, no internet needed)
-        Install: pip install pyttsx3
-        """
-        try:
-            import pyttsx3
-            
-            engine = pyttsx3.init()
-            engine.setProperty('rate', 150)  # Speed
-            engine.setProperty('volume', 1.0)  # Volume
-            engine.save_to_file(text, output_file)
-            engine.runAndWait()
-            
-            if os.path.exists(output_file):
-                logger.info(f"TTS generated (pyttsx3): {output_file}")
-                return True
-            
-            return False
-        
-        except Exception as e:
-            logger.error(f"pyttsx3 TTS error: {e}")
-            return False
+        self.voice = TTS_VOICE or "vi-VN-HoaiMyNeural"
     
     def generate_speech(self, text, output_file):
-        """Generate speech audio from text"""
         try:
-            # Try edge-tts first (better quality)
-            if self.text_to_speech_google(text, output_file):
-                return output_file
+            out_path = Path(output_file).resolve()
             
-            # Fallback to pyttsx3
-            if self.text_to_speech_pyttsx3(text, output_file):
-                return output_file
+            async def _run():
+                communicate = edge_tts.Communicate(text, self.voice)
+                await communicate.save(str(out_path))
+
+            asyncio.run(_run())
             
-            logger.error("All TTS methods failed")
+            if out_path.exists() and out_path.stat().st_size > 0:
+                logger.info(f"TTS generated: {out_path}")
+                return str(out_path)
+            
+            logger.error("TTS generation failed: Empty file")
             return None
-        
         except Exception as e:
             logger.error(f"Speech generation error: {e}")
             return None
 
-# Global instance
 voice = VoiceHandler()
