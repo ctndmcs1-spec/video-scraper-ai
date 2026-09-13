@@ -58,7 +58,7 @@ def generate_video():
         for q in search_queries:
             if len(clips) >= clips_needed:
                 break
-            videos = youtube.search_videos(q, max_results=15)
+            videos = youtube.search_videos(q, max_results=60)
             
             for v in videos:
                 if len(clips) >= clips_needed:
